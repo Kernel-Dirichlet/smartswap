@@ -303,22 +303,41 @@ def validate_weights(weights):
 
 def main():
     parser = argparse.ArgumentParser(description="Swappiness Adjustment Daemon")
-    parser.add_argument("--max_entries", type=int, default=DEFAULT_MAX_ENTRIES,
-                      help="Max number of entries before deleting old ones")
-    parser.add_argument("--snapshot_interval", type=int, default=DEFAULT_SNAPSHOT_INTERVAL,
-                      help="Interval (seconds) for snapshots")
-    parser.add_argument("--swapfile_size", type=int, default=DEFAULT_SWAPFILE_SIZE,
-                      help="Size of swapfile in MB (default 1GB)")
-    parser.add_argument("--disk-latency-weight", type=float, default=DEFAULT_WEIGHTS['disk_latency'],
-                      help="Weight for disk latency in swappiness calculation")
-    parser.add_argument("--cpu-usage-weight", type=float, default=DEFAULT_WEIGHTS['cpu_usage'],
-                      help="Weight for CPU usage in swappiness calculation")
-    parser.add_argument("--ram-usage-weight", type=float, default=DEFAULT_WEIGHTS['ram_usage'],
-                      help="Weight for RAM usage in swappiness calculation")
-    parser.add_argument("--network-bandwidth-weight", type=float, default=DEFAULT_WEIGHTS['network_bandwidth'],
-                      help="Weight for network bandwidth in swappiness calculation")
-    parser.add_argument("--pid", type=int, help="Process ID to monitor")
-    parser.add_argument("--niceness", type=int, help="Set niceness value for the specified PID (-20 to 19)")
+    parser.add_argument("--max_entries", 
+                        type = int, 
+                        default = DEFAULT_MAX_ENTRIES,
+                      help = "Max number of entries before deleting old ones")
+    parser.add_argument("--snapshot_interval",
+                        type = int,
+                        default = DEFAULT_SNAPSHOT_INTERVAL,
+                      help = "Interval (seconds) for snapshots")
+    parser.add_argument("--swapfile_size",
+                        type = int,
+                        default = DEFAULT_SWAPFILE_SIZE,
+                      help = "Size of swapfile in MB (default 1GB)")
+
+    parser.add_argument("--disk-latency-weight", type = float,
+                        default = DEFAULT_WEIGHTS['disk_latency'],
+                        help = "Weight for disk latency in swappiness calculation")
+    parser.add_argument("--cpu-usage-weight", 
+                        type = float,
+                        default = DEFAULT_WEIGHTS['cpu_usage'],
+                      help = "Weight for CPU usage in swappiness calculation")
+    parser.add_argument("--ram-usage-weight", 
+                        type = float,
+                        default = DEFAULT_WEIGHTS['ram_usage'],
+                      help = "Weight for RAM usage in swappiness calculation")
+    parser.add_argument("--network-bandwidth-weight",
+                        type = float,
+                        default = DEFAULT_WEIGHTS['network_bandwidth'],
+                      help = "Weight for network bandwidth in swappiness calculation")
+    parser.add_argument("--pid", 
+                        type = int,
+                        help = "Process ID to monitor")
+
+    parser.add_argument("--niceness",
+                        type = int,
+                        help = "Set niceness value for the specified PID (-20 to 19)")
     
     args = parser.parse_args()
 
@@ -366,7 +385,9 @@ def main():
     print(f"Using weights: {weights}")
     print(f"Logging to {LOG_FILE}")
 
-    daemon_thread = threading.Thread(target=run_daemon, args=(args.max_entries, args.snapshot_interval, weights), daemon=True)
+    daemon_thread = threading.Thread(target = run_daemon,
+                                     args = (args.max_entries,
+                                             args.snapshot_interval, weights), daemon = True)
     daemon_thread.start()
 
     while True:
