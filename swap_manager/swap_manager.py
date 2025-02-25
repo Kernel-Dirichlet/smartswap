@@ -12,6 +12,8 @@ from datetime import datetime, UTC
 from swap_niceness_utils import calculate_disk_io_swappiness, calculate_network_swappiness, calculate_cpu_swappiness
 
 # Default values
+# ======================================================
+
 DEFAULT_MAX_ENTRIES = 200
 DEFAULT_SNAPSHOT_INTERVAL = 5
 DEFAULT_SWAPFILE_SIZE = 1024  # 1GB in MB
@@ -21,6 +23,7 @@ LOG_FILE = "/tmp/swap-mgr_log.txt"
 SWAPFILE_PATH = "/swapfile"
 CONFIG_FILE = "swp_mgr_cfg.json"
 
+# ======================================================
 # Default weights for different optimization targets (sum = 1.0)
 DEFAULT_WEIGHTS = {
     'disk_latency': 0.25,
@@ -30,12 +33,9 @@ DEFAULT_WEIGHTS = {
 }
 
 def load_config():
-    """Load weights and process settings from config file"""
     try:
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            
-            # Load weights with defaults
             weights = {
                 'disk_latency': config.get('DISK_LATENCY', DEFAULT_WEIGHTS['disk_latency']),
                 'cpu_usage': config.get('CPU_USAGE', DEFAULT_WEIGHTS['cpu_usage']),
@@ -43,20 +43,16 @@ def load_config():
                 'network_bandwidth': config.get('NETWORK_BANDWIDTH', DEFAULT_WEIGHTS['network_bandwidth'])
             }
             
-            # Load optional process settings
+            # Load PID w/ or w/o niceness if exist
             process_settings = {
                 'pid': config.get('PID', None),
                 'niceness': config.get('NICENESS', DEFAULT_NICENESS)
             }
             
-            # Print process settings if PID exists
             if process_settings['pid']:
                 try:
-                    # Check if process is still running
                     if psutil.pid_exists(process_settings['pid']):
                         print(f"Config: Found PID {process_settings['pid']} with niceness {process_settings['niceness']}")
-                        
-                        # Try to update niceness if PID exists
                         try:
                             os.setpriority(os.PRIO_PROCESS, process_settings['pid'], process_settings['niceness'])
                             print(f"Updated niceness to {process_settings['niceness']} for PID {process_settings['pid']}")
@@ -80,7 +76,6 @@ def load_config():
         return DEFAULT_WEIGHTS, {'pid': None, 'niceness': DEFAULT_NICENESS}
 
 def create_swapfile(size_mb):
-    """Create and enable a swapfile of the specified size in MB"""
     if os.path.exists(SWAPFILE_PATH):
         print(f"Swapfile {SWAPFILE_PATH} already exists")
         return True
@@ -88,15 +83,20 @@ def create_swapfile(size_mb):
     print(f"Creating {size_mb}MB swapfile at {SWAPFILE_PATH}")
     
     try:
-        # Try fallocate first (faster)
+        # Try fallocate - most file systems support this
         subprocess.run(['fallocate', '-l', f'{size_mb}M', SWAPFILE_PATH], check=True)
     except subprocess.CalledProcessError:
-        print("fallocate failed, falling back to dd (this may take longer)")
+        print("fallocate failed, falling back to dd...")
         try:
-            # Fall back to dd for BTRFS
-            subprocess.run(['dd', 'if=/dev/zero', f'of={SWAPFILE_PATH}', 
-                          'bs=1M', f'count={size_mb}', 'status=progress'], 
-                          check=True, stderr=subprocess.PIPE)
+            # Fall back to dd (BTRFS file system is an example)
+            subprocess.run(['dd',
+                            'if=/dev/zero',
+                            f'of={SWAPFILE_PATH}', 
+                          'bs=1M',
+                            f'count={size_mb}',
+                            'status=progress'], 
+                          check = True,
+                          stderr = subprocess.PIPE)
         except subprocess.CalledProcessError as e:
             print(f"Failed to create swapfile: {e}")
             # Clean up partial file
@@ -105,14 +105,14 @@ def create_swapfile(size_mb):
             return False
 
     try:
-        # Set correct permissions
+        # Set permissions
         os.chmod(SWAPFILE_PATH, 0o600)
-        
-        # Format as swap
         subprocess.run(['mkswap', SWAPFILE_PATH], check=True)
         
-        # Enable swap
-        subprocess.run(['swapon', SWAPFILE_PATH], check=True)
+        # Enable swap if off
+        subprocess.run(['swapon',
+                        SWAPFILE_PATH],
+                        check = True)
         
         print(f"Successfully created and enabled {size_mb}MB swapfile")
         return True
@@ -201,7 +201,6 @@ New swappiness: {new_swappiness}"""
         print(f"Error writing to log: {e}")
 
 def calculate_swappiness(metrics, weights):
-    """Calculate optimal swappiness based on weighted metrics"""
     # Normalize metrics to 0-1 range
     normalized_metrics = {
         'disk_latency': min(1.0, metrics['disk_latency'] / 100),  # Normalize against 100ms baseline
@@ -236,7 +235,7 @@ def adjust_swappiness(metrics_list, weights, weights_changed=None):
 
     new_swappiness = calculate_swappiness(averages, weights)
 
-    if abs(new_swappiness - old_swappiness) >= 5:  # Only change if difference is significant
+    if abs(new_swappiness - old_swappiness) >= 5:  # Only change if difference is >= 5
         set_swappiness(int(new_swappiness))
         write_to_log(metrics_list[-1], old_swappiness, new_swappiness, len(metrics_list), weights_changed)
 
