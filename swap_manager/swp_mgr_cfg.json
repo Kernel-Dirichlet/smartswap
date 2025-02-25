@@ -1,0 +1,7 @@
+{
+    "DISK_LATENCY": 0.25,
+    "CPU_USAGE": 0.25, 
+    "RAM_USAGE": 0.25,
+    "NETWORK_BANDWIDTH": 0.25
+}
+
