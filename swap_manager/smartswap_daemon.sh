@@ -1,40 +1,39 @@
 #!/bin/bash
-######### SMARTSWAP ######################
+########## SMARTSWAP #############
+
+# SmartSwap is a service which automatically and dynamically adjusts swappines for the server it runs on 
+# While not likely to alleviate key bottlenecks - SmartSwap may help squeeze every bit of performance from a system 
+# SmartSwap is flexible to user goals, as different use cases will prefer higher or lower swappiness
+# SmartSwap optimizes a weighted combination of CPU usage, RAM (memory) usage, diso I/O latency and network latency
+# These weights tell SmartSwap what to prioritize (note: the weights should sum to 1)
+# Ex. for CPU critical tasks, SmartSwap will prioritize minimizing global CPU usage by adjusting swappiness downward, possibly at the expense
+# of RAM usage, disk I/O latency etc. 
+# Simiarly, for virtualization, higher swappiness is generally preferrable. 
 
 
-#SWAPPINESS DAEMON FOR ARCH LINUX
 
-#SmartSwap is a package which dynamically adjusts swappiness on Arch Linux systems based on system load and system objectives
-# This script monitors and adjusts the swappiness parameter based on system memory usage.
+######### CONFIG ##############################################
 
-#### CONFIG ####################################################################
+CHECK_INTERVAL=5  # Measure system metrics and potentially adjust swappiness ever $CHECK_INTERVAL seconds
+VERY_LOW_THRESHOLD=20   # user defined "VERY LOW" memory usage threshold (%)
+LOW_THRESHOLD=40   # user defined "LOW" memory usage threshold (%)
+MEDIUM_THRESHOLD=60  # user defined "MEDIUM" memory usage threshold (%)
+HIGH_THRESHOLD=80  # user defined "HIGH" memory usage threshold (%)
+VERY_HIGH_THRESHOLD=90  # user defined "VERY HIGH" memory usage threshold (%)
+CRITICAL_THRESHOLD=95  # user defined "CRITICAL" memory usage threshold (%)
+MAX_LOG_ENTRIES=10 # number of maximum log entries in the log file before overriding oldest entries
+DISK_IO_SAMPLE_RATE=2 # how many seconds to sample disk metrics
+###############################################################
 
-CHECK_INTERVAL=5  # How often to measure (and potentially adjust) swappiness.
-VERY_LOW_THRESHOLD=20   # Threshold for "VERY LOW" memory usage
-LOW_THRESHOLD=40   # Threshold for "LOW" memory usage
-MEDIUM_THRESHOLD=60  # Threshold for "MEDIUM" memory usage 
-HIGH_THRESHOLD=80  # Treshold for "HIGH" memory usage
-VERY_HIGH_THRESHOLD=90  # Threshold for "VERY HIGH" memory usage 
-CRITICAL_THRESHOLD=95  # Threshold for "CRITICAL" memory usage
+# Workload weights - these should sum to 100
 
+CPU_WEIGHT=40
+RAM_WEIGHT=20
+IO_WEIGHT=20
+NETWORK_WEIGHT=20
 
-##### WORKLOAD WEIGHTS ##########
-# These values should sum to 1 - they represent relative importance in how adjusted swappiness is calculated
-# Example: a CPU heavy workload that involves a lot of repeated calculations might have 
-# CPU_WEIGHT = 75 
-# RAM_WEIGHT = 10
-# IO_WEIGHT = 5
-# NETWORK_WEIGHT = 5
-# This means that minimizing CPU usage is the priority of the swappiness manager, with the other metrics being of much lower optimization 
-# priority 
-
-CPU_WEIGHT=25
-RAM_WEIGHT=25
-IO_WEIGHT=25
-NETWORK_WEIGHT=25
-
-# Log file configuration
-LOG_FILE="/tmp/swap_daemon.log"
+# Log file name 
+LOG_FILE="/tmp/smartswap.log"
 
 # Ensure we're running as root
 if [ "$(id -u)" -ne 0 ]; then
@@ -47,18 +46,18 @@ get_memory_usage() {
     free | grep Mem | awk '{print int($3/$2 * 100)}'
 }
 
-# Function to get current CPU usage percentage
+# Function to get current CPU usage as a percentage
 get_cpu_usage() {
     top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print int(100 - $1)}'
 }
 
-# Function to get current IO usage (improved metric)
+# Function to get current I/O usage 
 get_io_usage() {
-    # Get disk utilization percentage using iostat
-    if command -v iostat >/dev/null 2>&1; then
-        # Sample for 2 seconds to get more accurate readings
+    # disk utilization percentage using iostat 
+    if command -v iostat >/dev/null 1>&1; then
+        # Sample for $DISK_IO_SAMPLE_RATE seconds for accurate readings
         # Use the average of all disks' %util values, including HDDs, SSDs, and NVMe drives
-        iostat -dx 2 1 | awk '
+        iostat -dx $DISK_IO_SAMPLE_RATE 1 | awk '
         BEGIN {sum=0; count=0;}
         /%util/ {header=1; next;}
         header==1 && $1 ~ /^[a-zA-Z]/ && $1 !~ /^loop/ {
@@ -76,19 +75,18 @@ get_io_usage() {
             else print 50;
         }'
     else
-        # Fallback method if iostat is not available
-        # Check current disk activity using /proc/diskstats for all disk types
+        # Fall back if iostat is not available
+        # Check disk activity using /proc/diskstats for all disk types
         local read_before=0
         local write_before=0
         
-        # Get stats for all disk types (sda for SATA, nvme for NVMe, mmcblk for eMMC/SD)
+        # Get stats for all disk types - sda: SATA nvme: NVMe mmcblk: eMMC/SD)
         local disks=$(ls -l /dev/disk/by-path/ 2>/dev/null | grep -v "part[0-9]" | awk '{print $NF}' | sed 's/\.\.\/\.\.\///' | grep -E '^sd|^nvme|^mmcblk|^xvd|^vd')
         if [ -z "$disks" ]; then
-            # Fallback to common patterns if by-path doesn't work
             disks=$(lsblk -d -o NAME | grep -E '^sd|^nvme|^mmcblk|^xvd|^vd')
         fi
         
-        # If we still don't have disks, try a direct approach
+        # If still can't read, fallback to direct disk stat calculation
         if [ -z "$disks" ]; then
             disks=$(grep -E ' sd[a-z] | nvme[0-9]n[0-9] | mmcblk[0-9] | xvd[a-z] | vd[a-z] ' /proc/diskstats | awk '{print $3}')
         fi
@@ -127,12 +125,12 @@ get_io_usage() {
             done
         fi
         
-        # Calculate IO operations per second and convert to a percentage
-        # Scale differently for different drive types (NVMe can handle more IOPS)
+        # Calculate I/O operations per second and convert to a percentage
+        # Scale differently for different drive types (NVMEs can handle more IOPS)
         local iops=$(( (read_after - read_before) + (write_after - write_before) ))
         local io_percent=0
         
-        # Check if we have NVMe drives (they can handle more IOPS)
+        # Check if we have NVMe drives
         if echo "$disks" | grep -q "nvme"; then
             # NVMe drives can handle ~500K IOPS, so scale accordingly (500 IOPS = ~1%)
             io_percent=$(( iops / 500 ))
@@ -155,7 +153,6 @@ get_network_usage() {
     # Get network utilization if available
     if command -v ifstat >/dev/null 2>&1; then
         # Get total network throughput and normalize to percentage (assuming 1Gbps max)
-        # Fixed to use standard ifstat without -b option
         network_percent=$(ifstat 1 1 | tail -n 1 | awk '{print int(($1 + $2) * 8 / 10000000 * 100)}')
         
         # Cap at 100%
@@ -196,18 +193,32 @@ log_metrics() {
     local swappiness=$5
     local original_swappiness=$6
     
-    echo "$timestamp:" >> $LOG_FILE
-    echo "CPU usage: $cpu_usage%" >> $LOG_FILE
-    echo "RAM usage: $mem_usage%" >> $LOG_FILE
-    echo "Disk I/O: $io_usage%" >> $LOG_FILE
-    echo "Network: $network_usage%" >> $LOG_FILE
-    echo "Original swappiness: $original_swappiness" >> $LOG_FILE
-    echo "Current swappiness: $swappiness" >> $LOG_FILE
-    echo "-------" >> $LOG_FILE
+    # Count number of timestamp entries
+    local num_entries=$(grep -c "^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} [0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}:" "${LOG_FILE}" 2>/dev/null || echo 0)
+    
+    # If we have 100 entries, truncate the log file by keeping only the last 99 entries
+    if [ "${num_entries}" -ge $MAX_LOG_ENTRIES ]; then
+        # Create temp file with last 99 entries
+        tail -n $((7 * MAX_LOG_ENTRIES)) "${LOG_FILE}" > "${LOG_FILE}.tmp" # Keep last N entries
+        # Replace original with truncated version
+        mv "${LOG_FILE}.tmp" "${LOG_FILE}"
+    fi
+    
+    # Append new entry
+    {
+        echo "${timestamp}:"
+        echo "CPU usage: ${cpu_usage}%"
+        echo "RAM usage: ${mem_usage}%"
+        echo "Disk I/O: ${io_usage}%"
+        echo "Network: ${network_usage}%"
+        echo "Original swappiness: ${original_swappiness}"
+        echo "Current swappiness: ${swappiness}"
+        echo "-------"
+    } >> "${LOG_FILE}"
 }
 
-# Function to calculate optimal swappiness based on memory usage
-# This uses a more granular approach with values from 0-200 in steps of 5
+# Function to calculate adjusted swappiness based on CPU, RAM, I/O and network usage
+# Swappiness has a range from 0-200 and adjusted in increments of 5 for granularity 
 calculate_optimal_swappiness() {
     local mem_usage=$1
     local cpu_usage=$2
@@ -217,7 +228,7 @@ calculate_optimal_swappiness() {
     local memory_based_swappiness
     
     # Logic for determining memory-based swappiness:
-    # - Very low memory usage (0-20%): Minimal swapping (0-15)
+    # - Very low memory usage (0-20%): Minimum swapping (0-15)
     # - Low memory usage (20-40%): Light swapping (20-40)
     # - Medium memory usage (40-60%): Moderate swapping (45-80)
     # - High memory usage (60-80%): Aggressive swapping (85-120)
@@ -225,60 +236,60 @@ calculate_optimal_swappiness() {
     # - Critical memory usage (90-100%): Maximum swapping (165-200)
     
     if [ "$mem_usage" -lt "$VERY_LOW_THRESHOLD" ]; then
-        # Very low memory usage: Minimal swapping
-        # Formula: 0 + (mem_usage * 15/20) = 0-15 range
+        # VERY LOW memory usage: Minimum swapping
+        # Formula: 0 + (mem_usage * 15/20) - scaled to the 0-15 range
         memory_based_swappiness=$(( (mem_usage * 15) / VERY_LOW_THRESHOLD ))
         
     elif [ "$mem_usage" -lt "$LOW_THRESHOLD" ]; then
         # Low memory usage: Light swapping
-        # Formula: 20 + ((mem_usage - 20) * 20/20) = 20-40 range
+        # Formula: 20 + ((mem_usage - 20) * 20/20) - scaled to the 20-40 range
         memory_based_swappiness=$(( 20 + ((mem_usage - VERY_LOW_THRESHOLD) * 20) / (LOW_THRESHOLD - VERY_LOW_THRESHOLD) ))
         
     elif [ "$mem_usage" -lt "$MEDIUM_THRESHOLD" ]; then
         # Medium memory usage: Moderate swapping
-        # Formula: 45 + ((mem_usage - 40) * 35/20) = 45-80 range
+        # Formula: 45 + ((mem_usage - 40) * 35/20) - scaled to the 45-80 range
         memory_based_swappiness=$(( 45 + ((mem_usage - LOW_THRESHOLD) * 35) / (MEDIUM_THRESHOLD - LOW_THRESHOLD) ))
         
     elif [ "$mem_usage" -lt "$HIGH_THRESHOLD" ]; then
         # High memory usage: Aggressive swapping
-        # Formula: 85 + ((mem_usage - 60) * 35/20) = 85-120 range
+        # Formula: 85 + ((mem_usage - 60) * 35/20) - scaled to the 85-120 range
         memory_based_swappiness=$(( 85 + ((mem_usage - MEDIUM_THRESHOLD) * 35) / (HIGH_THRESHOLD - MEDIUM_THRESHOLD) ))
         
     elif [ "$mem_usage" -lt "$VERY_HIGH_THRESHOLD" ]; then
         # Very high memory usage: Very aggressive swapping
-        # Formula: 125 + ((mem_usage - 80) * 35/10) = 125-160 range
+        # Formula: 125 + ((mem_usage - 80) * 35/10) - scaled to the 125-160 range
         memory_based_swappiness=$(( 125 + ((mem_usage - HIGH_THRESHOLD) * 35) / (VERY_HIGH_THRESHOLD - HIGH_THRESHOLD) ))
         
     else
         # Critical memory usage: Maximum swapping
-        # Formula: 165 + ((mem_usage - 90) * 35/10) = 165-200 range
-        # Capped at 200 maximum
+        # Formula: 165 + ((mem_usage - 90) * 35/10) - scaled to the 165-200 range
+	# Capped at 200 maximum (maximum swappiness value)
         memory_based_swappiness=$(( 165 + ((mem_usage - VERY_HIGH_THRESHOLD) * 35) / (100 - VERY_HIGH_THRESHOLD) ))
         if [ "$memory_based_swappiness" -gt 200 ]; then
             memory_based_swappiness=200
         fi
     fi
     
-    # CPU-based swappiness adjustment (high CPU usage = lower swappiness)
+    # CPU-based swappiness logic (high CPU usage = lower swappiness)
     local cpu_based_swappiness=$((200 - cpu_usage * 2))
     if [ "$cpu_based_swappiness" -lt 0 ]; then
         cpu_based_swappiness=0
     fi
     
-    # IO-based swappiness adjustment (high IO = higher swappiness)
+    # IO-based swappiness logic (high IO = higher swappiness)
     local io_based_swappiness=$((io_usage * 2))
     if [ "$io_based_swappiness" -gt 200 ]; then
         io_based_swappiness=200
     fi
     
-    # Network-based swappiness adjustment (high network = moderate swappiness)
+    # Network-based swappiness logic (high network = moderate swappiness)
     local network_based_swappiness=$((network_usage + 50))
     if [ "$network_based_swappiness" -gt 200 ]; then
         network_based_swappiness=200
     fi
     
     # Calculate weighted average swappiness based on workload weights
-    # Using integer weights (out of 100) instead of floating point to avoid arithmetic errors
+    # Using integer weights (out of 100) 
     swappiness_value=$(( 
         (memory_based_swappiness * RAM_WEIGHT + 
          cpu_based_swappiness * CPU_WEIGHT + 
@@ -335,13 +346,13 @@ while true; do
     network_usage=$(get_network_usage)
     current_swappiness=$(get_swappiness)
     
-    # Calculate optimal swappiness for current system state
+    # Calculate adjusted swappiness for current system state
     optimal_swappiness=$(calculate_optimal_swappiness $mem_usage $cpu_usage $io_usage $network_usage)
     
     echo "Current metrics: Memory: $mem_usage%, CPU: $cpu_usage%, IO: $io_usage%, Network: $network_usage%"
     echo "Current swappiness: $current_swappiness, Optimal swappiness: $optimal_swappiness"
     
-    # Only change swappiness if it differs from the optimal value by more than 5
+    # Only change swappiness if it differs from the predicted optimal value by more than 5
     # This prevents frequent small adjustments that might not have meaningful impact
     if [ $(( current_swappiness - optimal_swappiness )) -gt 5 ] || [ $(( optimal_swappiness - current_swappiness )) -gt 5 ]; then
         echo "Adjusting swappiness from $current_swappiness to $optimal_swappiness based on weighted system metrics"
