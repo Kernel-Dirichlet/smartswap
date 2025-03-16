@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# Create systemd service file for shell_swapper
+# Create systemd service file for smartswap_daemon
 echo "Creating systemd service file..."
-cat << 'EOF' > /etc/systemd/system/smartswap.service
+cat << 'EOF' > /etc/systemd/system/smartswap-daemon.service
 [Unit]
 Description=Dynamic Swap Management Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /usr/local/bin/smartswap_daemon.sh
+ExecStart=/bin/bash /usr/lib/smartswap/smartswap_daemon.sh
 Restart=no
-RestartSec=60
+RestartSec=5
 User=root
 
 [Install]
@@ -24,14 +24,20 @@ if [ $? -ne 0 ]; then
 fi
 echo "Service file created successfully"
 
-# Copy smartswap script to system location
-echo "Installing smartswap manager..."
-if ! cp smartswap_daemon.sh /usr/local/bin/; then
-    echo "ERROR: Failed to copy script to /usr/local/bin/"
+# Create directory and copy smartswap_daemon script
+echo "Creating installation directory..."
+if ! mkdir -p /usr/lib/smartswap/; then
+    echo "ERROR: Failed to create directory /usr/lib/smartswap/"
     exit 1
 fi
 
-if ! chmod +x /usr/local/bin/smartswap_daemon.sh; then
+echo "Installing smartswap_daemon script..."
+if ! cp smartswap_daemon.sh /usr/lib/smartswap/; then
+    echo "ERROR: Failed to copy script to /usr/lib/smartswap/"
+    exit 1
+fi
+
+if ! chmod +x /usr/lib/smartswap/smartswap_daemon.sh; then
     echo "ERROR: Failed to make script executable"
     exit 1
 fi
@@ -45,17 +51,20 @@ if ! systemctl daemon-reload; then
 fi
 echo "Systemd daemon reloaded successfully"
 
-echo "Enabling shell-swapper service..."
-if ! systemctl enable smartswap; then
-    echo "ERROR: Failed to enable shell-swapper service"
+echo "Enabling smartswap-daemon service..."
+if ! systemctl enable smartswap-daemon; then
+    echo "ERROR: Failed to enable smartswap-daemon service"
     exit 1
 fi
 echo "Service enabled successfully"
 
-echo "Starting shell-swapper service..."
-if ! systemctl start smartswap; then
-    echo "ERROR: Failed to start shell-swapper service"
+echo "Starting smartswap-daemon service..."
+if ! systemctl start smartswap-daemon; then
+    echo "ERROR: Failed to start smartswap-daemon service"
     exit 1
 fi
-echo "SmartSwap installation: success!"
-echo "SmartSwap Service started successfully"
+echo "Service started successfully"
+
+echo "SmartSwap Daemon installation completed successfully"
+echo "Check service status with: systemctl status smartswap-daemon"
+
