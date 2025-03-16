@@ -1,8 +1,15 @@
 #!/bin/bash
+set -e  # Exit immediately on error
 
-# Create systemd service file for smartswap_daemon
+if [ -z "$1" ]; then
+    echo "ERROR: No package directory specified. Run this script with sudo after installation."
+    exit 1
+fi
+
+PKGDIR="$1"
+
 echo "Creating systemd service file..."
-cat << 'EOF' > /etc/systemd/system/smartswap-daemon.service
+cat << 'EOF' > "$PKGDIR/etc/systemd/system/smartswap-daemon.service"
 [Unit]
 Description=Dynamic Swap Management Service
 After=network.target
@@ -18,53 +25,13 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to create service file"
-    exit 1
-fi
-echo "Service file created successfully"
+echo "Service file created successfully."
 
-# Create directory and copy smartswap_daemon script
 echo "Creating installation directory..."
-if ! mkdir -p /usr/lib/smartswap/; then
-    echo "ERROR: Failed to create directory /usr/lib/smartswap/"
-    exit 1
-fi
+mkdir -p "$PKGDIR/usr/lib/smartswap/"
 
-echo "Installing smartswap_daemon script..."
-if ! cp smartswap_daemon.sh /usr/lib/smartswap/; then
-    echo "ERROR: Failed to copy script to /usr/lib/smartswap/"
-    exit 1
-fi
+echo "Setting up smartswap_daemon script..."
+chmod +x "$PKGDIR/usr/lib/smartswap/smartswap_daemon.sh"
 
-if ! chmod +x /usr/lib/smartswap/smartswap_daemon.sh; then
-    echo "ERROR: Failed to make script executable"
-    exit 1
-fi
-echo "Script installed successfully"
-
-# Reload systemd and enable/start service
-echo "Reloading systemd daemon..."
-if ! systemctl daemon-reload; then
-    echo "ERROR: Failed to reload systemd daemon"
-    exit 1
-fi
-echo "Systemd daemon reloaded successfully"
-
-echo "Enabling smartswap-daemon service..."
-if ! systemctl enable smartswap-daemon; then
-    echo "ERROR: Failed to enable smartswap-daemon service"
-    exit 1
-fi
-echo "Service enabled successfully"
-
-echo "Starting smartswap-daemon service..."
-if ! systemctl start smartswap-daemon; then
-    echo "ERROR: Failed to start smartswap-daemon service"
-    exit 1
-fi
-echo "Service started successfully"
-
-echo "SmartSwap Daemon installation completed successfully"
-echo "Check service status with: systemctl status smartswap-daemon"
+echo "✅ Setup complete. Run 'sudo systemctl enable --now smartswap-daemon' to start."
 
