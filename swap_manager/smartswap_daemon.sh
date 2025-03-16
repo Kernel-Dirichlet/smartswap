@@ -23,6 +23,7 @@ VERY_HIGH_THRESHOLD=90  # user defined "VERY HIGH" memory usage threshold (%)
 CRITICAL_THRESHOLD=95  # user defined "CRITICAL" memory usage threshold (%)
 MAX_LOG_ENTRIES=10 # number of maximum log entries in the log file before overriding oldest entries
 DISK_IO_SAMPLE_RATE=2 # how many seconds to sample disk metrics
+
 ###############################################################
 
 # Workload weights - these should sum to 100
@@ -86,17 +87,17 @@ get_io_usage() {
             disks=$(lsblk -d -o NAME | grep -E '^sd|^nvme|^mmcblk|^xvd|^vd')
         fi
         
-        # If still can't read, fallback to direct disk stat calculation
+        # fallback to direct disk stat calculation
         if [ -z "$disks" ]; then
             disks=$(grep -E ' sd[a-z] | nvme[0-9]n[0-9] | mmcblk[0-9] | xvd[a-z] | vd[a-z] ' /proc/diskstats | awk '{print $3}')
         fi
         
-        # If we still don't have disks, use a generic pattern
+        # fallback to more general disk stat calculation 
         if [ -z "$disks" ]; then
             read_before=$(grep -E ' sd[a-z] | nvme[0-9]n[0-9] | mmcblk[0-9] | xvd[a-z] | vd[a-z] ' /proc/diskstats 2>/dev/null | awk '{sum += $6} END {print sum}')
             write_before=$(grep -E ' sd[a-z] | nvme[0-9]n[0-9] | mmcblk[0-9] | xvd[a-z] | vd[a-z] ' /proc/diskstats 2>/dev/null | awk '{sum += $10} END {print sum}')
         else
-            # Process each disk individually
+            # Loop over disks
             for disk in $disks; do
                 disk_stats=$(grep " ${disk} " /proc/diskstats 2>/dev/null)
                 if [ -n "$disk_stats" ]; then
@@ -125,21 +126,21 @@ get_io_usage() {
             done
         fi
         
-        # Calculate I/O operations per second and convert to a percentage
+        # Calculate I/O operations per second & percentage conversion
         # Scale differently for different drive types (NVMEs can handle more IOPS)
         local iops=$(( (read_after - read_before) + (write_after - write_before) ))
         local io_percent=0
         
-        # Check if we have NVMe drives
+        # NVMe drive check
         if echo "$disks" | grep -q "nvme"; then
-            # NVMe drives can handle ~500K IOPS, so scale accordingly (500 IOPS = ~1%)
+            # NVMe drives can handle ~500K IOPS - scale to (500 IOPS = ~1%)
             io_percent=$(( iops / 500 ))
         else
-            # Traditional drives handle fewer IOPS, so scale differently (100 IOPS = ~1%)
+            # Traditional drives handle fewer IOPS - scale to (100 IOPS = ~1%)
             io_percent=$(( iops / 100 ))
         fi
         
-        # Cap at 100%
+        # guard pattern to cap at 100% - will fix >100% bugs in future updates
         if [ "$io_percent" -gt 100 ]; then
             io_percent=100
         fi
@@ -148,14 +149,14 @@ get_io_usage() {
     fi
 }
 
-# Function to get current network usage (simplified metric)
+# Function to get current network usage (simple version)
 get_network_usage() {
-    # Get network utilization if available
+    # Get network utilization 
     if command -v ifstat >/dev/null 2>&1; then
         # Get total network throughput and normalize to percentage (assuming 1Gbps max)
         network_percent=$(ifstat 1 1 | tail -n 1 | awk '{print int(($1 + $2) * 8 / 10000000 * 100)}')
         
-        # Cap at 100%
+	# Cap at 100% (same bug as above)
         if [ "$network_percent" -gt 100 ]; then
             network_percent=100
         fi
